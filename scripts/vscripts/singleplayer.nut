@@ -352,5 +352,3 @@ main_loop <- function() {
 		}
 	}
 }
-
-//EntFireByHandle(Entities.First(), "RunScriptCode", "::mod_logic()", 0.0, null, null);

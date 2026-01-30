@@ -581,14 +581,4 @@ main_loop <- function() {
 			EntFire("push_"+i, "Enable");
 		}
 	}
-	/*
-	if(detectors.len() == 0){
-		for (local i=0; i<detector_count; i++) {
-			detectors.append(Entities.CreateByClassname("func_portal_detector"));
-			detectors[i].SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-		}
-	}
-	*/
 }
-
-//EntFireByHandle(Entities.First(), "RunScriptCode", "::mod_logic()", 0.1, null, null);
