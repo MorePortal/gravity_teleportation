@@ -8,11 +8,28 @@ prop_id <- 0
 detected_blue <- null;
 detected_orange <- null;
 
+portal <- [null, null];
+portal_temp <- [null, null];
+origin <- [null, null];
+local_matrix <- [null, null,];
+local_inv <- [null, null];
+local_g <- [null, null];
+g0_constant <- [null, null];
+
+// Physical properties
 const dt = 0.0333333333333333333;
 const g = 600.0;
 const b_ = 32.0;
 const a_ = 56.0;
+const a2tb2 = 3211264.0;
+
+// Number of props which we are tracking
 const max_props = 4;
+
+// Precalculated constants
+const d1x = 151484.09686731211638346807701780282673155084349221841210723666217;
+const d1y = 65259.463559493120080357854500977681313126585891064972886646114392;
+const d1z = 45610.448033096360092265308747487004729466142379513813304004751523;
 
 main_loop <- function() {
 	
@@ -21,45 +38,39 @@ main_loop <- function() {
 	Run_Physics <- function() {
 		
 			for (local i=-1; i<props.len(); i++) {
-				if(i == -1)
+			
+				if (i < 0)
 					curr <- GetPlayer();
 				else
 					curr <- Entities.FindByName(null, props[i]);
+				if(!curr) continue;
+				
+				if(Check_Funnels(curr)) continue;
+				
+				acceleration <- Vector(0.0, 0.0, 0.0);
+				
+				for(local j=0; j<2; j++) {
 					
-				if (Check_Funnels(curr)) continue;
-				
-				blue_local_v <- Matrix_Vector_Mult_3D(blue_local_inv, curr.GetCenter() - blue_origin)
-				blue_ellipt_v <- Get_Ellipsoidal_Coords(blue_local_v);
-				orange_local_v <- Matrix_Vector_Mult_3D(orange_local_inv, curr.GetCenter() - orange_origin)
-				orange_ellipt_v <- Get_Ellipsoidal_Coords(orange_local_v);
-				
-				blue_aux_v <- Get_Aux_Vec(blue_local_v, blue_ellipt_v);
-				blue_g0 <- Get_g0_Vec(blue_local_v, blue_ellipt_v, blue_aux_v) * dh
-				blue_local_acc <- blue_g0
-				
-				orange_aux_v <- Get_Aux_Vec(orange_local_v, orange_ellipt_v);
-				orange_g0 <- Get_g0_Vec(orange_local_v, orange_ellipt_v, orange_aux_v) * -dh
-				orange_local_acc <- orange_g0
+					local_v <- Matrix_Vector_Mult_3D(local_inv[j], curr.GetCenter() - origin[j]);
+					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
+					aux_v <- Get_Aux_Vec(local_v, ellipt_v);
+					g0_acc <- Get_g0_Vec(local_v, ellipt_v, aux_v) * g0_constant[j]
 					
-				blue_g1_blue <- Get_g1x_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*blue_g.x + Get_g1y_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*blue_g.y + Get_g1z_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*blue_g.z
-				blue_g1_orange <- Get_g1x_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*-orange_g.x + Get_g1y_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*orange_g.y + Get_g1z_Vec(blue_local_v, blue_ellipt_v, blue_aux_v)*orange_g.z
-				blue_local_acc <- blue_local_acc + (blue_g1_blue + blue_g1_orange)
+					p1 <- j;
+					p2 <- 1-j;
+					g1x <- Get_g1x_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].x - local_g[p2].x)
+					g1y <- Get_g1y_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].y + local_g[p2].y)
+					g1z <- Get_g1z_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].z + local_g[p2].z)
+					
+					acceleration += Matrix_Vector_Mult_3D(local_matrix[j], g1x + g1y + g1z - g0_acc); // minus sign for g1 is already accounted in the gravity vector
+				}
 				
-				orange_g1_blue <- Get_g1x_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*-blue_g.x + Get_g1y_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*blue_g.y + Get_g1z_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*blue_g.z
-				orange_g1_orange <- Get_g1x_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*orange_g.x + Get_g1y_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*orange_g.y + Get_g1z_Vec(orange_local_v, orange_ellipt_v, orange_aux_v)*orange_g.z
-				orange_local_acc <- orange_local_acc + (orange_g1_orange + orange_g1_blue)
-
-				blue_acc <- Matrix_Vector_Mult_3D(blue_local, blue_local_acc)
-				orange_acc <- Matrix_Vector_Mult_3D(orange_local, orange_local_acc)
-				
-				
-				
-				if(i == -1) {
-					player.SetVelocity(player.GetVelocity() + (blue_acc + orange_acc)*dt);
+				if(i < 0) {
+					curr.SetVelocity(curr.GetVelocity() + acceleration*dt);
 					continue;
 				}
 
-				dir <- (blue_acc + orange_acc);
+				dir <- acceleration;
 				pushes[i].__KeyValueFromFloat("magnitude", dir.Norm() / 50); // I don't know why you need to divide by fifty (source code I found says that it multiplies by 100), but it works
 				pushes[i].SetOrigin(curr.GetOrigin());
 				pushes[i].SetForwardVector(dir);			
@@ -138,31 +149,42 @@ main_loop <- function() {
 
 	// Generates coefficients for basis accelerations 
 	
+	function Get_Coordinates() {
+		for(local i=0; i<2; i++) {
+			::portal[i] = portal_temp[i]
+			::origin[i] = ::portal[i].GetOrigin();
+			::local_matrix[i] = Vectors_To_Matrix(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
+			::local_inv[i] = Vectors_To_Matrix_Inv(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
+			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,-g));
+		}
+	}
+	
 	function Generate() {
-		blue_portal <- blue_temp;
-		blue_origin <- blue_temp.GetOrigin();
-		blue_local <- blue_temp_local;
-		blue_local_inv <- Vectors_To_Matrix_Inv(blue_temp.GetUpVector(), blue_temp.GetLeftVector(), blue_temp.GetForwardVector());
-		orange_portal <- orange_temp;
-		orange_origin <- orange_temp.GetOrigin();
-		orange_local <- orange_temp_local;
-		orange_local_inv <- Vectors_To_Matrix_Inv(orange_temp.GetUpVector(), orange_temp.GetLeftVector(), orange_temp.GetForwardVector());
+		p1 <- 0;
+		p2 <- 1;
 		
-		blue_g <- Matrix_Vector_Mult_3D(blue_local_inv, Vector(0.0,0.0,-g));
-		orange_g <- Matrix_Vector_Mult_3D(orange_local_inv, Vector(0.0,0.0,-g));
+		local_v_12 <- Matrix_Vector_Mult_3D(local_inv[p2], origin[p1] - origin[p2]);
+		ellipt_v_12 <- Get_Ellipsoidal_Coords(local_v_12);
+		local_v_21 <- Matrix_Vector_Mult_3D(local_inv[p1], origin[p2] - origin[p1]);
+		ellipt_v_21 <- Get_Ellipsoidal_Coords(local_v_21);
 		
-		blue_orange_local_v <- Matrix_Vector_Mult_3D(orange_local_inv, blue_origin - orange_origin)
-		blue_orange_ellipt_v <- Get_Ellipsoidal_Coords(blue_orange_local_v);
-		orange_blue_local_v <- Matrix_Vector_Mult_3D(blue_local_inv, orange_origin - blue_origin)
-		orange_blue_ellipt_v <- Get_Ellipsoidal_Coords(orange_blue_local_v);
-		
-		local d0; 
-		if(blue_orange_ellipt_v.x > 0)
-			d0 = 1.0/(Integral(0.0, atan(blue_orange_ellipt_v.x/b_), E_0, 128) + Integral(0.0, atan(blue_orange_ellipt_v.x/b_), E_0, 128));
-		else
-			d0 = 1.0;
-		dh <- d0*g*(orange_origin - blue_origin).z;
-		
+		if (local_v_12.x != 0.0) {
+			aux_12 <- local_v_12.z > 0 ? (ellipt_v_12.y*ellipt_v_12.z / a2tb2) : (-ellipt_v_12.y*ellipt_v_12.z / a2tb2)
+			vx_12 <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v_12.x * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1x, 128))
+			vy_12 <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v_12.y * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1y, 128))
+			vz_12 <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux_12 - local_v_12.z * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1z, 128))
+			
+			aux_21 <- local_v_21.z > 0 ? (ellipt_v_21.y*ellipt_v_21.z / a2tb2) : (-ellipt_v_21.y*ellipt_v_21.z / a2tb2)
+			vx_21 <- -(local_g[p2].x - local_g[p1].x)*0.5 * d1x * (-local_v_21.x * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1x, 128))
+			vy_21 <- -(local_g[p2].y + local_g[p1].y)*0.5 * d1y * (-local_v_21.y * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1y, 128))
+			vz_21 <- -(local_g[p2].z + local_g[p1].z)*0.5 * d1z * (aux_21 - local_v_21.z * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1z, 128))
+			
+			::g0_constant[p1] = (g*(origin[p1] - origin[p2]).z + vx_12 + vy_12 + vz_12 - vx_21 - vy_21 - vz_21) / (Integral(0.0, atan(ellipt_v_12.x/b_), E_0, 128) + Integral(0.0, atan(ellipt_v_21.x/b_), E_0, 128))
+			::g0_constant[p2] = -g0_constant[p1];
+		} else {
+			::g0_constant[p1] = 0;
+			::g0_constant[p2] = 0
+		}
 		return;
 	}
 
@@ -183,25 +205,25 @@ main_loop <- function() {
 	// If array is not yet filled, checks all props
 	
 	function Check_Add() {
-		local max_dist = -1.0;
-		local max_index = -1;
+		max_dist <- -1.0;
+		max_index <- -1;
 		
 		for(local i = 0; i < names.len(); i++){
-			foreach(origin in [blue_origin, orange_origin]) {
+			foreach(orig in origin) {
 				if (props.len() < max_props) {
 					curr <- Entities.FindByClassname(null, names[i])
 				} else {
 					max_dist = -1.0;
 					max_index = -1;
 					for(local i = 0; i<props.len(); i++) {
-						local prop_origin = Entities.FindByName(null, props[i]).GetOrigin();
-						local dist = min((prop_origin-blue_origin).Length(), (prop_origin-orange_origin).Length());
+						prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
+						dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
 						if(dist > max_dist) {
 							max_dist = dist;
 							max_index = i;
 						}
 					}
-					curr <- Entities.FindByClassnameWithin(null, names[i], origin, max_dist);
+					curr <- Entities.FindByClassnameWithin(null, names[i], orig, max_dist);
 				}
 				while(curr) {
 				
@@ -224,8 +246,8 @@ main_loop <- function() {
 							max_dist = -1.0;
 							max_index = -1;
 							for(local i = 0; i<props.len(); i++) {
-								local prop_origin = Entities.FindByName(null, props[i]).GetOrigin();
-								local dist = min((prop_origin-blue_origin).Length(), (prop_origin-orange_origin).Length());
+								prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
+								dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
 								if(dist > max_dist) {
 									max_dist = dist;
 									max_index = i;
@@ -237,7 +259,7 @@ main_loop <- function() {
 					if (props.len() < max_props)
 						curr <- Entities.FindByClassname(curr, names[i])
 					else
-						curr <- Entities.FindByClassnameWithin(curr, names[i], origin, max_dist);
+						curr <- Entities.FindByClassnameWithin(curr, names[i], orig, max_dist);
 				}
 				if (props.len() < max_props) break;
 			}
@@ -275,56 +297,52 @@ main_loop <- function() {
 	EntFire("detector_blue", "Enable");
 	EntFire("detector_orange", "Enable");
 	
-	// Check the existence of portals
-	if(!detected_blue) {
-		blue_portal <- null;
-		orange_portal <- null;
-		return;
-	}
+	// Check portals
 	
-	blue_temp <- Entities.FindByClassnameNearest("prop_portal", detected_blue, 1.0);
-	orange_temp <- Entities.FindByClassnameNearest("prop_portal", detected_orange, 1.0);
-	::detected_blue <- null;
-	::detected_orange <- null;
-	
-	// If portals moved this frame - skipping
-	if(!blue_temp || !orange_temp) {
-		Check_Remove();
-		Check_Add();
-		return;
-	}
-	
-	// Generate coefficients and run physics for newly created portals
-	if(!blue_portal || !orange_portal) {
-		blue_temp_local <- Vectors_To_Matrix(blue_temp.GetUpVector(), blue_temp.GetLeftVector(), blue_temp.GetForwardVector());
-		orange_temp_local <- Vectors_To_Matrix(orange_temp.GetUpVector(), orange_temp.GetLeftVector(), orange_temp.GetForwardVector());
-		Generate();
-		Check_Remove();
-		Check_Add();
+	portal_temp = [null, null];
 		
+	if(detected_blue && detected_orange) {
+		portal_temp[0] = Entities.FindByClassnameNearest("prop_portal", detected_blue, 1.0);
+		portal_temp[1] = Entities.FindByClassnameNearest("prop_portal", detected_orange, 1.0);
+		::detected_blue = null;
+		::detected_orange = null;
+	}
+	
+	if(!portal_temp[0] || !portal_temp[1]) {
+		::portal[0] = null;
+		::portal[1] = null;
+		
+		return;
+	}
+	
+	
+	if(!::portal[0] || !::portal[1]) {
+		Get_Coordinates();
+		Generate();
+		
+		Check_Remove();
+		Check_Add();
 		Run_Physics();
 		return;
-	}
+	} 
 	
-	// Generate coefficients and run physics for replaced portals
-	blue_temp_local <- Vectors_To_Matrix(blue_temp.GetUpVector(), blue_temp.GetLeftVector(), blue_temp.GetForwardVector());
-	orange_temp_local <- Vectors_To_Matrix(orange_temp.GetUpVector(), orange_temp.GetLeftVector(), orange_temp.GetForwardVector());
-	if (!Vector_Eq(blue_origin, blue_temp.GetOrigin()) || !Matrix_Eq(blue_local, blue_temp_local) || !Vector_Eq(orange_origin, orange_temp.GetOrigin()) || !Matrix_Eq(orange_local, orange_temp_local)) {
+	if (!Vector_Eq(::origin[0], portal_temp[0].GetOrigin()) || !Vector_Eq(::portal[0].GetAngles(), portal_temp[0].GetAngles()) || !Vector_Eq(::origin[1], portal_temp[1].GetOrigin()) || !Vector_Eq(::portal[1].GetAngles(), portal_temp[1].GetAngles())) {
+		Get_Coordinates();
 		Generate();
+		
 		Check_Remove();
 		Check_Add();
-		
 		Run_Physics();
 		return;
 	}
 	
 	// Simply run physics if portals are unchanged
-
+	
 	Check_Remove();
 	Check_Add();
-	
 	Run_Physics();
 	return;
+	
 }
 
 ::mod_logic <- function() {
