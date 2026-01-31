@@ -189,6 +189,6 @@ function Get_g1z_Vec(loc, elip, aux) {
 	
 	local v1 = (aux2 * -aux.z + Vector(0.0, 0.0, elip.x * aux2.LengthSqr())) * (1/(aux.LengthSqr()*atb))
 	local v2 = Vector(0.0, 0.0, -Integral(atan(elip.x/b_), PI/2, E_1z, 16))
-	local v3 = aux * ((elip.x*elip.x + a2pb2) /(aux.LengthSqr()*(a2tb2*sqrt(Ra*Rb) + atb*Ra*Rb)))
+	local v3 = aux * (loc.z * (elip.x*elip.x + a2pb2) /(aux.LengthSqr()*(a2tb2*sqrt(Ra*Rb) + atb*Ra*Rb)))
 	return (v1 + v2 + v3)*d1z*0.5;
 };
