@@ -16,22 +16,24 @@ origin <- [null, null, null, null];
 local_matrix <- [null, null, null, null];
 local_inv <- [null, null, null, null];
 local_g <- [null, null, null, null];
-g0_constant <- [null, null, null, null];
+constants <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]];
 
 // Physical properties
 const dt = 0.0333333333333333333333333333333333333333333;
 const g = 600.0;
-const b_ = 32.0;
-const a_ = 56.0;
-const a2tb2 = 3211264.0;
 
 // Number of props for which we calculate acceleration
 const max_props = 6;
 
-// Precalculated constants
-const d1x = 151484.09686731211638346807701780282673155084349221841210723666217;
-const d1y = 65259.463559493120080357854500977681313126585891064972886646114392;
-const d1z = 45610.448033096360092265308747487004729466142379513813304004751523;
+// Integrals' precision (amount of intervals the range of integration is divided into)
+const precision = 16
+
+// Portal potential and it's derivatives induced by itself
+self_potential <- [[0.0, 0.0, 0.0, 0.0]]
+self_potential.append([0.0, -Integral(0.0, PI/2, E_1x, precision), 0.0, 0.0])
+self_potential.append([0.0, 0.0, -Integral(0.0, PI/2, E_1y, precision), 0.0])
+self_potential.append([0.0, 0.0, 0.0, -Integral(0.0, PI/2, E_1z, precision)])
+// Technically, there are self_potential[0][3] and self_potential[3][0] terms, but they will cancel themselves out
 
 main_loop <- function() {
 	
@@ -59,16 +61,14 @@ main_loop <- function() {
 					
 					local_v <- Matrix_Vector_Mult_3D(local_inv[j], curr.GetCenter() - origin[j]);
 					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
-					aux_v <- Get_Aux_Vec(local_v, ellipt_v);
-					g0_acc <- Get_g0_Vec(local_v, ellipt_v, aux_v) * g0_constant[j]
+					aux_v <- Get_Aux_Vector(local_v, ellipt_v);
 					
-					p1 <- j;
-					p2 <- (j > 1) ? 5-j : 1-j;
-					g1x <- Get_g1x_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].x - local_g[p2].x)
-					g1y <- Get_g1y_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].y + local_g[p2].y)
-					g1z <- Get_g1z_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].z + local_g[p2].z)
+					g0 <- Get_g0(ellipt_v, aux_v) * constants[j][0]
+					g1x <- Get_g1x(local_v, ellipt_v, aux_v, precision) * constants[j][1]
+					g1y <- Get_g1y(local_v, ellipt_v, aux_v, precision) * constants[j][2]
+					g1z <- Get_g1z(local_v, ellipt_v, aux_v, precision) * constants[j][3]
 					
-					acceleration += Matrix_Vector_Mult_3D(local_matrix[j], g1x + g1y + g1z - g0_acc); // minus sign for g1 is already accounted in the gravity vector
+					acceleration += Matrix_Vector_Mult_3D(local_matrix[j], (g0 + g1x + g1y + g1z)*-1);
 				}
 				
 				if(i < 0) {
@@ -77,14 +77,14 @@ main_loop <- function() {
 				}
 
 				dir <- acceleration;
-				pushes[i].__KeyValueFromFloat("magnitude", dir.Norm() / 50); // I don't know why you need to divide by fifty (source code I found says that it multiplies by 100), but it works
+				pushes[i].__KeyValueFromFloat("magnitude", dir.Norm() / 33.333333333333333); // Now even 50 doesn't work! 1/3 of a hundred looks like it's working, but I'm not sure
 				pushes[i].SetOrigin(curr.GetOrigin());
 				pushes[i].SetForwardVector(dir);			
 			}
 			return;
 		}
 		
-	// Funnels should nullify redirected gravity too
+	// Funnels should nullify portalled gravity too
 	
 	function Check_Funnels(object) {
 		is_colliding <- false;
@@ -159,7 +159,7 @@ main_loop <- function() {
 			::origin[i] = ::portal[i].GetOrigin();
 			::local_matrix[i] = Vectors_To_Matrix(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
 			::local_inv[i] = Vectors_To_Matrix_Inv(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
-			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,-g));
+			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,g));
 		}
 	}
 	
@@ -169,7 +169,7 @@ main_loop <- function() {
 			::origin[i] = ::portal[i].GetOrigin();
 			::local_matrix[i] = Vectors_To_Matrix(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
 			::local_inv[i] = Vectors_To_Matrix_Inv(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
-			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,-g));
+			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,g));
 		}
 	}
 
@@ -177,140 +177,205 @@ main_loop <- function() {
 	// Generates coefficients for basis accelerations 
 	
 	function Generate_Cyan_Purple() {
-		p1 <- 0;
-		p2 <- 1;
 		
-		local_v_12 <- Matrix_Vector_Mult_3D(local_inv[p2], origin[p1] - origin[p2]);
-		ellipt_v_12 <- Get_Ellipsoidal_Coords(local_v_12);
-		local_v_21 <- Matrix_Vector_Mult_3D(local_inv[p1], origin[p2] - origin[p1]);
-		ellipt_v_21 <- Get_Ellipsoidal_Coords(local_v_21);
+		matrix <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]; 
+
+		rside <- [0.0, 0.0, 0.0, 0.0]
+		rside[0] = g * (origin[1] - origin[0]).z
+		rside[1] =  local_g[1].x - local_g[0].x
+		rside[2] = -local_g[1].y - local_g[0].y
+		rside[3] = -local_g[1].z - local_g[0].z
 		
-		if (local_v_12.x != 0.0) {
-			aux_12 <- local_v_12.z > 0 ? (ellipt_v_12.y*ellipt_v_12.z / a2tb2) : (-ellipt_v_12.y*ellipt_v_12.z / a2tb2)
-			vx_12 <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v_12.x * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1x, 128))
-			vy_12 <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v_12.y * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1y, 128))
-			vz_12 <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux_12 - local_v_12.z * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1z, 128))
-			
-			aux_21 <- local_v_21.z > 0 ? (ellipt_v_21.y*ellipt_v_21.z / a2tb2) : (-ellipt_v_21.y*ellipt_v_21.z / a2tb2)
-			vx_21 <- -(local_g[p2].x - local_g[p1].x)*0.5 * d1x * (-local_v_21.x * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1x, 128))
-			vy_21 <- -(local_g[p2].y + local_g[p1].y)*0.5 * d1y * (-local_v_21.y * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1y, 128))
-			vz_21 <- -(local_g[p2].z + local_g[p1].z)*0.5 * d1z * (aux_21 - local_v_21.z * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1z, 128))
-			
-			::g0_constant[p1] = (g*(origin[p1] - origin[p2]).z + vx_12 + vy_12 + vz_12 - vx_21 - vy_21 - vz_21) / (Integral(0.0, atan(ellipt_v_12.x/b_), E_0, 128) + Integral(0.0, atan(ellipt_v_21.x/b_), E_0, 128))
-			::g0_constant[p2] = -g0_constant[p1];
-		} else {
-			::g0_constant[p1] = 0;
-			::g0_constant[p2] = 0
+		sign <- [-1, -1, 1, 1]
+		loc_coords <- [[null, null], [null, null]];
+		el_coords <- [[null, null], [null, null]];
+		aux_vectors <- [[null, null], [null, null]];
+		potential <- [[null, null], [null, null]];  // Potentials and their derivatives
+		for(local i=0; i<2; i++) {
+			for(local j=0; j<2; j++) {
+				if(i != j) {
+					loc_coords[i][j] = Matrix_Vector_Mult_3D(local_inv[j], origin[i] - origin[j]);
+					el_coords[i][j] = Get_Ellipsoidal_Coords(loc_coords[i][j]);
+					aux_vectors[i][j] = Get_Aux_Vector(loc_coords[i][j], el_coords[i][j]);
+					potential[i][j] = [Get_pot_Arr(loc_coords[i][j], el_coords[i][j], precision)]
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					for (local j1=0; j1<4; j1++) {
+						g_vec <- Get_g(loc_coords[i][j], el_coords[i][j], aux_vectors[i][j], j1, precision);
+						g_vec = Matrix_Vector_Mult_3D(local_matrix[j], g_vec);
+						g_vec = Matrix_Vector_Mult_3D(local_inv[i], g_vec);
+						g_vec = Vector_To_Array(g_vec);
+						for (local i1=1; i1<4; i1++)
+							potential[i][j][i1][j1] = g_vec[i1-1]
+					}
+				} else {
+					potential[i][j] = ::self_potential
+					// In total, there are 7*2 = 14 integrations
+				}
+			} 
+		}
+		
+		for (local i=0; i<4; i++)
+			for(local j=0; j<4; j++)
+				matrix[i][j] = potential[0][0][i][j] + sign[j] * potential[0][1][i][j] + sign[i] * potential[1][0][i][j] + sign[i] * sign[j] * potential[1][1][i][j];
+
+		solution <- Solve_Linear_System(matrix, rside, 4);
+		if (!solution) {
+			printl("Error in solving linear equation")
+			printl("Portal coordinates & orientations:")
+			printl("Portal 0: " + ::origin[0] + " " + ::portal[0].GetAngles())
+			printl("Portal 1: " + ::origin[1] + " " + ::portal[1].GetAngles())
+			printl("")
+			::constants = [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+			return;
+		}
+		
+		for (local i=0; i<4; i++) {
+			::constants[0][i] = solution[i];
+			::constants[1][i] = sign[i]*solution[i];
 		}
 		return;
 	}
 	
 	function Generate_Yellow_Red() {
-		p1 <- 2;
-		p2 <- 3;
 		
-		local_v_12 <- Matrix_Vector_Mult_3D(local_inv[p2], origin[p1] - origin[p2]);
-		ellipt_v_12 <- Get_Ellipsoidal_Coords(local_v_12);
-		local_v_21 <- Matrix_Vector_Mult_3D(local_inv[p1], origin[p2] - origin[p1]);
-		ellipt_v_21 <- Get_Ellipsoidal_Coords(local_v_21);
+		matrix <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]; 
+
+		rside <- [0.0, 0.0, 0.0, 0.0]
+		rside[0] = g * (origin[3] - origin[2]).z
+		rside[1] =  local_g[3].x - local_g[2].x
+		rside[2] = -local_g[3].y - local_g[2].y
+		rside[3] = -local_g[3].z - local_g[2].z
 		
-		if (local_v_12.x != 0.0) {
-			aux_12 <- local_v_12.z > 0 ? (ellipt_v_12.y*ellipt_v_12.z / a2tb2) : (-ellipt_v_12.y*ellipt_v_12.z / a2tb2)
-			vx_12 <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v_12.x * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1x, 128))
-			vy_12 <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v_12.y * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1y, 128))
-			vz_12 <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux_12 - local_v_12.z * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1z, 128))
-			
-			aux_21 <- local_v_21.z > 0 ? (ellipt_v_21.y*ellipt_v_21.z / a2tb2) : (-ellipt_v_21.y*ellipt_v_21.z / a2tb2)
-			vx_21 <- -(local_g[p2].x - local_g[p1].x)*0.5 * d1x * (-local_v_21.x * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1x, 128))
-			vy_21 <- -(local_g[p2].y + local_g[p1].y)*0.5 * d1y * (-local_v_21.y * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1y, 128))
-			vz_21 <- -(local_g[p2].z + local_g[p1].z)*0.5 * d1z * (aux_21 - local_v_21.z * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1z, 128))
-			
-			::g0_constant[p1] = (g*(origin[p1] - origin[p2]).z + vx_12 + vy_12 + vz_12 - vx_21 - vy_21 - vz_21) / (Integral(0.0, atan(ellipt_v_12.x/b_), E_0, 128) + Integral(0.0, atan(ellipt_v_21.x/b_), E_0, 128))
-			::g0_constant[p2] = -g0_constant[p1];
-		} else {
-			::g0_constant[p1] = 0;
-			::g0_constant[p2] = 0
+		sign <- [-1, -1, 1, 1]
+		loc_coords <- [[null, null], [null, null]];
+		el_coords <- [[null, null], [null, null]];
+		aux_vectors <- [[null, null], [null, null]];
+		potential <- [[null, null], [null, null]];  // Potentials and their derivatives
+		for(local i=0; i<2; i++) {
+			for(local j=0; j<2; j++) {
+				if(i != j) {
+					loc_coords[i][j] = Matrix_Vector_Mult_3D(local_inv[j+2], origin[i+2] - origin[j+2]);
+					el_coords[i][j] = Get_Ellipsoidal_Coords(loc_coords[i][j]);
+					aux_vectors[i][j] = Get_Aux_Vector(loc_coords[i][j], el_coords[i][j]);
+					potential[i][j] = [Get_pot_Arr(loc_coords[i][j], el_coords[i][j], precision)]
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					for (local j1=0; j1<4; j1++) {
+						g_vec <- Get_g(loc_coords[i][j], el_coords[i][j], aux_vectors[i][j], j1, precision);
+						g_vec = Matrix_Vector_Mult_3D(local_matrix[j+2], g_vec);
+						g_vec = Matrix_Vector_Mult_3D(local_inv[i+2], g_vec);
+						g_vec = Vector_To_Array(g_vec);
+						for (local i1=1; i1<4; i1++)
+							potential[i][j][i1][j1] = g_vec[i1-1]
+					}
+				} else {
+					potential[i][j] = ::self_potential
+					// In total, there are 7*2 = 14 integrations
+				}
+			} 
+		}
+		
+		for (local i=0; i<4; i++)
+			for(local j=0; j<4; j++)
+				matrix[i][j] = potential[0][0][i][j] + sign[j] * potential[0][1][i][j] + sign[i] * potential[1][0][i][j] + sign[i] * sign[j] * potential[1][1][i][j];
+
+		solution <- Solve_Linear_System(matrix, rside, 4);
+		if (!solution) {
+			printl("Error in solving linear equation")
+			printl("Portal coordinates & orientations:")
+			printl("Portal 2: " + ::origin[2] + " " + ::portal[2].GetAngles())
+			printl("Portal 3: " + ::origin[3] + " " + ::portal[3].GetAngles())
+			printl("")
+			::constants = [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+			return;
+		}
+		
+		for (local i=0; i<4; i++) {
+			::constants[2][i] = solution[i];
+			::constants[3][i] = sign[i]*solution[i];
 		}
 		return;
 	}
 	
 	function Generate_Both() {
+
+		matrix <-     [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]];   //8x8 matrix. Yes. Because we need 8 coefficients
+		matrix.extend([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
+		matrix.extend([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
+		matrix.extend([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
 		
-		potential_0 <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0,0.0]];
-		potential_1 <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0,0.0]];
+		rside <- [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+		rside[0] = g * (origin[1] - origin[0]).z
+		rside[1] =  local_g[1].x - local_g[0].x
+		rside[2] = -local_g[1].y - local_g[0].y
+		rside[3] = -local_g[1].z - local_g[0].z
+		rside[4] = g * (origin[3] - origin[2]).z
+		rside[5] =  local_g[3].x - local_g[2].x
+		rside[6] = -local_g[3].y - local_g[2].y
+		rside[7] = -local_g[3].z - local_g[2].z
 		
-		//Calculating potentials at a portal I from a portal J
+		sign <- [-1, -1, 1, 1]
+		loc_coords <- [[null, null, null, null], [null, null, null, null], [null, null, null, null], [null, null, null, null]];
+		el_coords <- [[null, null, null, null], [null, null, null, null], [null, null, null, null], [null, null, null, null]];
+		aux_vectors <- [[null, null, null, null], [null, null, null, null], [null, null, null, null], [null, null, null, null]];
+		potential <- [[null, null, null, null], [null, null, null, null], [null, null, null, null], [null, null, null, null]];  // Potentials and their derivatives
 		for(local i=0; i<4; i++) {
 			for(local j=0; j<4; j++) {
-				if (i != j) {
-					local_v <- Matrix_Vector_Mult_3D(local_inv[j], origin[i] - origin[j]);
-					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
-					potential_0[i][j] = Integral(0.0, atan(ellipt_v.x/b_), E_0, 128);
-					
-					p1 <- j;
-					p2 <- (j > 1) ? 5-j : 1-j;
-					
-					aux <- local_v.z > 0 ? (ellipt_v.y*ellipt_v.z / a2tb2) : (-ellipt_v.y*ellipt_v.z / a2tb2)
-					vx <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v.x * Integral(atan(ellipt_v.x/b_), PI/2, E_1x, 128))
-					vy <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v.y * Integral(atan(ellipt_v.x/b_), PI/2, E_1y, 128))
-					vz <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux - local_v.z * Integral(atan(ellipt_v.x/b_), PI/2, E_1z, 128))
-
-					potential_1[i][j] = vx + vy + vz;
-				}
-			}
-		}
-		
-		matrix <- [[0.0, 0.0], [0.0, 0.0]];
-		matrix[0][0] = potential_0[0][1] + potential_0[1][0];
-		matrix[1][1] = potential_0[2][3] + potential_0[3][2];
-		matrix[0][1] = -potential_0[0][2] + potential_0[0][3] + potential_0[1][2] - potential_0[1][3];
-		matrix[1][0] = -potential_0[2][0] + potential_0[2][1] + potential_0[3][0] - potential_0[3][1];
-		
-		rside <- [0.0, 0.0]
-		rside[0] = g * (origin[0] - origin[1]).z + potential_1[0][1] + potential_1[0][2] + potential_1[0][3] - potential_1[1][0] - potential_1[1][2] - potential_1[1][3];
-		rside[1] = g * (origin[2] - origin[3]).z + potential_1[2][0] + potential_1[2][1] + potential_1[2][3] - potential_1[3][0] - potential_1[3][1] - potential_1[3][2];
-		
-		solution <- Solve_2D_System(matrix, rside);
-		::g0_constant[0] = solution[0];
-		::g0_constant[1] = -solution[0];
-		::g0_constant[2] = solution[1];
-		::g0_constant[3] = -solution[1];
-		
-		return;
-	}
-	
-	function Calculate_Potential() {
-		potential_0 <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0,0.0]];
-		potential_1 <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0,0.0]];
-		
-		//Calculating potentials at a portal I from a portal J
-		for(local i=0; i<4; i++) {
-			for(local j=0; j<4; j++) {
-				if (i != j) {
-					local_v <- Matrix_Vector_Mult_3D(local_inv[j], origin[i] - origin[j]);
-					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
-					potential_0[i][j] = Integral(0.0, atan(ellipt_v.x/b_), E_0, 128) * g0_constant[j];
-					
-					p1 <- j;
-					p2 <- (j > 1) ? 5-j : 1-j;
-					
-					aux <- local_v.z > 0 ? (ellipt_v.y*ellipt_v.z / a2tb2) : (-ellipt_v.y*ellipt_v.z / a2tb2)
-					vx <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v.x * Integral(atan(ellipt_v.x/b_), PI/2, E_1x, 128))
-					vy <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v.y * Integral(atan(ellipt_v.x/b_), PI/2, E_1y, 128))
-					vz <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux - local_v.z * Integral(atan(ellipt_v.x/b_), PI/2, E_1z, 128))
-
-					potential_1[i][j] = vx + vy + vz;
+				if(i != j) {
+					loc_coords[i][j] = Matrix_Vector_Mult_3D(local_inv[j], origin[i] - origin[j]);
+					el_coords[i][j] = Get_Ellipsoidal_Coords(loc_coords[i][j]);
+					aux_vectors[i][j] = Get_Aux_Vector(loc_coords[i][j], el_coords[i][j]);
+					potential[i][j] = [Get_pot_Arr(loc_coords[i][j], el_coords[i][j], precision)]
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					for (local j1=0; j1<4; j1++) {
+						g_vec <- Get_g(loc_coords[i][j], el_coords[i][j], aux_vectors[i][j], j1, precision);
+						g_vec = Matrix_Vector_Mult_3D(local_matrix[j], g_vec);
+						g_vec = Matrix_Vector_Mult_3D(local_inv[i], g_vec);
+						g_vec = Vector_To_Array(g_vec);
+						for (local i1=1; i1<4; i1++)
+							potential[i][j][i1][j1] = g_vec[i1-1]
+					}
 				} else {
-					p1 <- j;
-					p2 <- (j > 1) ? 5-j : 1-j;
-					
-					potential_1[i][j] = (local_g[p1].z + local_g[p2].z)*0.5 * d1z / 1792.0;
+					potential[i][j] = ::self_potential
+					// In total, there are 7*(16-4) = 84 integrations
 				}
+			} 
+		}
+		
+		for (local i=0; i<4; i++) {
+			for(local j=0; j<4; j++) { 	
+				matrix[i][j]     = potential[0][0][i][j] + sign[j] * potential[0][1][i][j] + sign[i] * potential[1][0][i][j] + sign[i] * sign[j] * potential[1][1][i][j];
+				matrix[i][4+j]   = potential[0][2][i][j] + sign[j] * potential[0][3][i][j] + sign[i] * potential[1][2][i][j] + sign[i] * sign[j] * potential[1][3][i][j];
+				matrix[4+i][j]   = potential[2][0][i][j] + sign[j] * potential[2][1][i][j] + sign[i] * potential[3][0][i][j] + sign[i] * sign[j] * potential[3][1][i][j];
+				matrix[4+i][4+j] = potential[2][2][i][j] + sign[j] * potential[2][3][i][j] + sign[i] * potential[3][2][i][j] + sign[i] * sign[j] * potential[3][3][i][j];
 			}
 		}
-		for (local i=0; i<4; i++)
-			printl("portal " + i + ": " + (g * portal[i].GetOrigin().z + potential_0[i][0] + potential_0[i][1] + potential_0[i][2] + potential_0[i][3] + potential_1[i][0] + potential_1[i][1] + potential_1[i][2] + potential_1[i][3]))
-		printl("");
+		
+		solution <- Solve_Linear_System(matrix, rside, 8);
+		if (!solution) {
+			printl("Error in solving linear equation")
+			printl("Portal coordinates & orientations:")
+			printl("Portal 0: " + ::origin[0] + " " + ::portal[0].GetAngles())
+			printl("Portal 1: " + ::origin[1] + " " + ::portal[1].GetAngles())
+			printl("Portal 2: " + ::origin[2] + " " + ::portal[2].GetAngles())
+			printl("Portal 3: " + ::origin[3] + " " + ::portal[3].GetAngles())
+			printl("")
+			::constants = [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+			return;
+		}
+		
+		for (local i=0; i<4; i++) {
+			::constants[0][i] = solution[i];
+			::constants[1][i] = sign[i]*solution[i];
+			::constants[2][i] = solution[i+4];
+			::constants[3][i] = sign[i]*solution[i+4];
+		}
+		
 		return;
 	}
 
@@ -331,32 +396,24 @@ main_loop <- function() {
 	// If array is not yet filled, checks all props
 	
 	function Check_Add() {
-		max_dist <- -1.0;
-		max_index <- -1;
 		
 		for(local i = 0; i < names.len(); i++){
-			foreach(orig in origin) {
+			
+			for(local j = 0; j < 4; j++) {
+				
+				if (!::portal[j]) continue;
+				
 				if (props.len() < max_props) {
 					curr <- Entities.FindByClassname(null, names[i])
 				} else {
-					max_dist = -1.0;
-					max_index = -1;
-					for(local i = 0; i<props.len(); i++) {
-						prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
-						dist1 <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
-						dist2 <- min((prop_origin-origin[2]).Length(), (prop_origin-origin[3]).Length());
-						dist <- min(dist1, dist2);
-						if(dist > max_dist) {
-							max_dist = dist;
-							max_index = i;
-						}
-					}
-					curr <- Entities.FindByClassnameWithin(null, names[i], orig, max_dist);
+					prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+					dist <- Portal_Distance(prop_origin);
+
+					curr <- Entities.FindByClassnameWithin(null, names[i], ::origin[j], dist);
 				}
 				while(curr) {
 				
 					if(curr.GetName() == "") curr.__KeyValueFromString("targetname","pushable_"+(prop_id++));
-					if(!curr.IsValid()) continue;
 					
 					for(count <- 0; count<props.len(); count++) {
 						if(props[count] == curr.GetName())
@@ -368,33 +425,57 @@ main_loop <- function() {
 						if (props.len() < max_props)
 							props.append(curr.GetName());
 						else
-							props[max_index] = curr.GetName();
+							props[max_props-1] = curr.GetName();
+						
+						if(props.len() > 1) {
+							prev_prop_origin <- Entities.FindByName(null, props[props.len()-2]).GetOrigin();
+							prev_dist <- Portal_Distance(prev_prop_origin);
 							
-						if (props.len() == max_props) {
-							max_dist = -1.0;
-							max_index = -1;
-							for(local i = 0; i<props.len(); i++) {
-								prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
-								dist1 <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
-								dist2 <- min((prop_origin-origin[2]).Length(), (prop_origin-origin[3]).Length());
-								dist <- min(dist1, dist2);
-								if(dist > max_dist) {
-									max_dist = dist;
-									max_index = i;
-								}
+							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							dist <- Portal_Distance(prop_origin);
+							
+							index <- props.len()-1
+							while(prev_dist > dist) {
+								temp <- props[index-1];
+								props[index-1] = props[index];
+								props[index] = temp;
+								index--;
+								
+								if (index == 0) break;
+								prev_prop_origin <- Entities.FindByName(null, props[index-1]).GetOrigin();
+								prev_dist <- Portal_Distance(prev_prop_origin);
 							}
 						}
 					}
 					
-					if (props.len() < max_props)
+					if (props.len() < max_props) {
 						curr <- Entities.FindByClassname(curr, names[i])
-					else
-						curr <- Entities.FindByClassnameWithin(curr, names[i], orig, max_dist);
+					} else {
+						if (count ==  max_props){
+							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							dist <- Portal_Distance(prop_origin);
+						}
+						
+						curr <- Entities.FindByClassnameWithin(curr, names[i], ::origin[j], dist);
+					}
 				}
 				if (props.len() < max_props) break;
 			}
 		}
 		return;
+	}
+	
+	function Portal_Distance(other) {
+		if (::portal[0] && ::portal[2]) {
+			dist1 <- min((other-origin[0]).Length(), (other-origin[1]).Length());
+			dist2 <- min((other-origin[2]).Length(), (other-origin[3]).Length());
+			return min(dist1, dist2);
+		}
+		if (::portal[0])
+			return min((other-origin[0]).Length(), (other-origin[1]).Length());
+		if (::portal[2])
+			return min((other-origin[2]).Length(), (other-origin[3]).Length());
+		return 9999999
 	}
 	
 	detector <- null
@@ -527,7 +608,6 @@ main_loop <- function() {
 	
 	if (portal_temp[0] && portal_temp[1] && portal_temp[2] && portal_temp[3]) {
 		Generate_Both();
-		//Calculate_Potential();
 		
 		Check_Remove();
 		Check_Add();

@@ -14,22 +14,24 @@ origin <- [null, null];
 local_matrix <- [null, null,];
 local_inv <- [null, null];
 local_g <- [null, null];
-g0_constant <- [null, null];
+constants <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]];
 
 // Physical properties
-const dt = 0.0333333333333333333;
+const dt = 0.0333333333333333333333333333333333333333333;
 const g = 600.0;
-const b_ = 32.0;
-const a_ = 56.0;
-const a2tb2 = 3211264.0;
 
 // Number of props which we are tracking
 const max_props = 4;
 
-// Precalculated constants
-const d1x = 151484.09686731211638346807701780282673155084349221841210723666217;
-const d1y = 65259.463559493120080357854500977681313126585891064972886646114392;
-const d1z = 45610.448033096360092265308747487004729466142379513813304004751523;
+// Integrals' precision (amount of intervals the range of integration is divided into)
+const precision = 16
+
+// Portal potential and it's derivatives induced by itself
+self_potential <- [[0.0, 0.0, 0.0, 0.0]]
+self_potential.append([0.0, -Integral(0.0, PI/2, E_1x, precision), 0.0, 0.0])
+self_potential.append([0.0, 0.0, -Integral(0.0, PI/2, E_1y, precision), 0.0])
+self_potential.append([0.0, 0.0, 0.0, -Integral(0.0, PI/2, E_1z, precision)])
+// Technically, there are self_potential[0][3] and self_potential[3][0] terms, but they will cancel themselves out
 
 main_loop <- function() {
 	
@@ -53,16 +55,14 @@ main_loop <- function() {
 					
 					local_v <- Matrix_Vector_Mult_3D(local_inv[j], curr.GetCenter() - origin[j]);
 					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
-					aux_v <- Get_Aux_Vec(local_v, ellipt_v);
-					g0_acc <- Get_g0_Vec(local_v, ellipt_v, aux_v) * g0_constant[j]
+					aux_v <- Get_Aux_Vector(local_v, ellipt_v);
 					
-					p1 <- j;
-					p2 <- 1-j;
-					g1x <- Get_g1x_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].x - local_g[p2].x)
-					g1y <- Get_g1y_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].y + local_g[p2].y)
-					g1z <- Get_g1z_Vec(local_v, ellipt_v, aux_v) * (local_g[p1].z + local_g[p2].z)
+					g0 <- Get_g0(ellipt_v, aux_v) * constants[j][0]
+					g1x <- Get_g1x(local_v, ellipt_v, aux_v, precision) * constants[j][1]
+					g1y <- Get_g1y(local_v, ellipt_v, aux_v, precision) * constants[j][2]
+					g1z <- Get_g1z(local_v, ellipt_v, aux_v, precision) * constants[j][3]
 					
-					acceleration += Matrix_Vector_Mult_3D(local_matrix[j], g1x + g1y + g1z - g0_acc); // minus sign for g1 is already accounted in the gravity vector
+					acceleration += Matrix_Vector_Mult_3D(local_matrix[j], (g0 + g1x + g1y + g1z)*-1);
 				}
 				
 				if(i < 0) {
@@ -78,7 +78,7 @@ main_loop <- function() {
 			return;
 		}
 		
-	// Funnels should nullify redirected gravity too
+	// Funnels should nullify portalled gravity too
 	
 	function Check_Funnels(object) {
 		is_colliding <- false;
@@ -155,35 +155,68 @@ main_loop <- function() {
 			::origin[i] = ::portal[i].GetOrigin();
 			::local_matrix[i] = Vectors_To_Matrix(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
 			::local_inv[i] = Vectors_To_Matrix_Inv(::portal[i].GetUpVector(), ::portal[i].GetLeftVector(), ::portal[i].GetForwardVector());
-			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,-g));
+			::local_g[i] = Matrix_Vector_Mult_3D(local_inv[i], Vector(0.0,0.0,g));
 		}
 	}
 	
 	function Generate() {
-		p1 <- 0;
-		p2 <- 1;
+
+		matrix <- [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]; 
+
+		rside <- [0.0, 0.0, 0.0, 0.0]
+		rside[0] = g * (origin[1] - origin[0]).z
+		rside[1] =  local_g[1].x - local_g[0].x
+		rside[2] = -local_g[1].y - local_g[0].y
+		rside[3] = -local_g[1].z - local_g[0].z
 		
-		local_v_12 <- Matrix_Vector_Mult_3D(local_inv[p2], origin[p1] - origin[p2]);
-		ellipt_v_12 <- Get_Ellipsoidal_Coords(local_v_12);
-		local_v_21 <- Matrix_Vector_Mult_3D(local_inv[p1], origin[p2] - origin[p1]);
-		ellipt_v_21 <- Get_Ellipsoidal_Coords(local_v_21);
+		sign <- [-1, -1, 1, 1]
+		loc_coords <- [[null, null], [null, null]];
+		el_coords <- [[null, null], [null, null]];
+		aux_vectors <- [[null, null], [null, null]];
+		potential <- [[null, null], [null, null]];  // Potentials and their derivatives
+		for(local i=0; i<2; i++) {
+			for(local j=0; j<2; j++) {
+				if(i != j) {
+					loc_coords[i][j] = Matrix_Vector_Mult_3D(local_inv[j], origin[i] - origin[j]);
+					el_coords[i][j] = Get_Ellipsoidal_Coords(loc_coords[i][j]);
+					aux_vectors[i][j] = Get_Aux_Vector(loc_coords[i][j], el_coords[i][j]);
+					potential[i][j] = [Get_pot_Arr(loc_coords[i][j], el_coords[i][j], precision)]
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					potential[i][j].append([0.0, 0.0, 0.0, 0.0])
+					for (local j1=0; j1<4; j1++) {
+						g_vec <- Get_g(loc_coords[i][j], el_coords[i][j], aux_vectors[i][j], j1, precision);
+						g_vec = Matrix_Vector_Mult_3D(local_matrix[j], g_vec);
+						g_vec = Matrix_Vector_Mult_3D(local_inv[i], g_vec);
+						g_vec = Vector_To_Array(g_vec);
+						for (local i1=1; i1<4; i1++)
+							potential[i][j][i1][j1] = g_vec[i1-1]
+					}
+				} else {
+					potential[i][j] = ::self_potential
+					// In total, there are 7*2 = 14 integrations
+				}
+			} 
+		}
 		
-		if (local_v_12.x != 0.0) {
-			aux_12 <- local_v_12.z > 0 ? (ellipt_v_12.y*ellipt_v_12.z / a2tb2) : (-ellipt_v_12.y*ellipt_v_12.z / a2tb2)
-			vx_12 <- -(local_g[p1].x - local_g[p2].x)*0.5 * d1x * (-local_v_12.x * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1x, 128))
-			vy_12 <- -(local_g[p1].y + local_g[p2].y)*0.5 * d1y * (-local_v_12.y * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1y, 128))
-			vz_12 <- -(local_g[p1].z + local_g[p2].z)*0.5 * d1z * (aux_12 - local_v_12.z * Integral(atan(ellipt_v_12.x/b_), PI/2, E_1z, 128))
-			
-			aux_21 <- local_v_21.z > 0 ? (ellipt_v_21.y*ellipt_v_21.z / a2tb2) : (-ellipt_v_21.y*ellipt_v_21.z / a2tb2)
-			vx_21 <- -(local_g[p2].x - local_g[p1].x)*0.5 * d1x * (-local_v_21.x * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1x, 128))
-			vy_21 <- -(local_g[p2].y + local_g[p1].y)*0.5 * d1y * (-local_v_21.y * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1y, 128))
-			vz_21 <- -(local_g[p2].z + local_g[p1].z)*0.5 * d1z * (aux_21 - local_v_21.z * Integral(atan(ellipt_v_21.x/b_), PI/2, E_1z, 128))
-			
-			::g0_constant[p1] = (g*(origin[p1] - origin[p2]).z + vx_12 + vy_12 + vz_12 - vx_21 - vy_21 - vz_21) / (Integral(0.0, atan(ellipt_v_12.x/b_), E_0, 128) + Integral(0.0, atan(ellipt_v_21.x/b_), E_0, 128))
-			::g0_constant[p2] = -g0_constant[p1];
-		} else {
-			::g0_constant[p1] = 0;
-			::g0_constant[p2] = 0
+		for (local i=0; i<4; i++)
+			for(local j=0; j<4; j++)
+				matrix[i][j] = potential[0][0][i][j] + sign[j] * potential[0][1][i][j] + sign[i] * potential[1][0][i][j] + sign[i] * sign[j] * potential[1][1][i][j];
+
+		solution <- Solve_Linear_System(matrix, rside, 4);
+		if (!solution) {
+			printl("Error in solving linear equation")
+			printl("Portal coordinates & orientations:")
+			printl("Portal 0: " + ::origin[0] + " " + ::portal[0].GetAngles())
+			printl("Portal 1: " + ::origin[1] + " " + ::portal[1].GetAngles())
+			printl("")
+			::constants = [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+			return;
+		}
+		
+		for (local i=0; i<4; i++) {
+			::constants[0][i] = solution[i];
+			::constants[1][i] = sign[i]*solution[i];
 		}
 		return;
 	}
@@ -205,30 +238,21 @@ main_loop <- function() {
 	// If array is not yet filled, checks all props
 	
 	function Check_Add() {
-		max_dist <- -1.0;
-		max_index <- -1;
-		
+
 		for(local i = 0; i < names.len(); i++){
+			
 			foreach(orig in origin) {
 				if (props.len() < max_props) {
 					curr <- Entities.FindByClassname(null, names[i])
 				} else {
-					max_dist = -1.0;
-					max_index = -1;
-					for(local i = 0; i<props.len(); i++) {
-						prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
-						dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
-						if(dist > max_dist) {
-							max_dist = dist;
-							max_index = i;
-						}
-					}
-					curr <- Entities.FindByClassnameWithin(null, names[i], orig, max_dist);
+					prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+					dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
+
+					curr <- Entities.FindByClassnameWithin(null, names[i], orig, dist);
 				}
 				while(curr) {
 				
 					if(curr.GetName() == "") curr.__KeyValueFromString("targetname","pushable_"+(prop_id++));
-					if(!curr.IsValid()) continue;
 					
 					for(count <- 0; count<props.len(); count++) {
 						if(props[count] == curr.GetName())
@@ -240,26 +264,39 @@ main_loop <- function() {
 						if (props.len() < max_props)
 							props.append(curr.GetName());
 						else
-							props[max_index] = curr.GetName();
+							props[max_props-1] = curr.GetName();
+						
+						if(props.len() > 1) {
+							prev_prop_origin <- Entities.FindByName(null, props[props.len()-2]).GetOrigin();
+							prev_dist <- min((prev_prop_origin-origin[0]).Length(), (prev_prop_origin-origin[1]).Length());
 							
-						if (props.len() == max_props) {
-							max_dist = -1.0;
-							max_index = -1;
-							for(local i = 0; i<props.len(); i++) {
-								prop_origin <- Entities.FindByName(null, props[i]).GetOrigin();
-								dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
-								if(dist > max_dist) {
-									max_dist = dist;
-									max_index = i;
-								}
+							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
+							
+							index <- props.len()-1
+							while(prev_dist > dist) {
+								temp <- props[index-1];
+								props[index-1] = props[index];
+								props[index] = temp;
+								index--;
+								
+								if (index == 0) break;
+								prev_prop_origin <- Entities.FindByName(null, props[index-1]).GetOrigin();
+								prev_dist <- min((prev_prop_origin-origin[0]).Length(), (prev_prop_origin-origin[1]).Length());
 							}
 						}
 					}
 					
-					if (props.len() < max_props)
+					if (props.len() < max_props) {
 						curr <- Entities.FindByClassname(curr, names[i])
-					else
-						curr <- Entities.FindByClassnameWithin(curr, names[i], orig, max_dist);
+					} else {
+						if (count ==  max_props){
+							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
+						}
+						
+						curr <- Entities.FindByClassnameWithin(curr, names[i], orig, dist);
+					}
 				}
 				if (props.len() < max_props) break;
 			}
