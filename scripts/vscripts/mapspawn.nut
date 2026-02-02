@@ -1,4 +1,5 @@
 if(!("Entities" in this)) return;
+IncludeScript("sl_gravity");
 
 if (IsMultiplayer())
 	IncludeScript("multiplayer");

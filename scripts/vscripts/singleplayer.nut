@@ -4,7 +4,8 @@ IncludeScript("maths");
 names <- ["prop_weighted_cube", "prop_monster_box", "prop_paint_bomb", "npc_portal_turret_floor", "npc_security_camera", "prop_exploding_futbol"];
 pushes <- [];
 props <- [];
-prop_id <- 0
+all_portals <- [];
+detectors <- [];
 detected_blue <- null;
 detected_orange <- null;
 
@@ -44,7 +45,7 @@ main_loop <- function() {
 				if (i < 0)
 					curr <- GetPlayer();
 				else
-					curr <- Entities.FindByName(null, props[i]);
+					curr <- props[i];
 				if(!curr) continue;
 				
 				if(Check_Funnels(curr)) continue;
@@ -225,9 +226,19 @@ main_loop <- function() {
 	
 	function Check_Remove() {
 		for(local i=props.len(); i>0; i--) {
-			if(!Entities.FindByName(null, props[i-1])) {
+			if(!props[i-1].IsValid()) {
 				pushes[i-1].__KeyValueFromFloat("magnitude", 0.0);
 				props.remove(i-1);
+			}
+		}
+		return;
+	}
+	
+	function Portal_Remove() {
+		for(local i=all_portals.len(); i>0; i--) {
+			if(all_portals[i-1] && !(all_portals[i-1].IsValid())) {
+				all_portals[i-1] = null;
+				EntFireByHandle(detectors[i-1], "Disable", "", 0, null, null)
 			}
 		}
 		return;
@@ -245,32 +256,30 @@ main_loop <- function() {
 				if (props.len() < max_props) {
 					curr <- Entities.FindByClassname(null, names[i])
 				} else {
-					prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+					prop_origin <- props.top().GetOrigin();
 					dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
 
 					curr <- Entities.FindByClassnameWithin(null, names[i], orig, dist);
 				}
 				while(curr) {
-				
-					if(curr.GetName() == "") curr.__KeyValueFromString("targetname","pushable_"+(prop_id++));
 					
 					for(count <- 0; count<props.len(); count++) {
-						if(props[count] == curr.GetName())
+						if(props[count] == curr)
 							break;
 					}
 					
 					if (count ==  props.len())
 					{
 						if (props.len() < max_props)
-							props.append(curr.GetName());
+							props.append(curr);
 						else
-							props[max_props-1] = curr.GetName();
+							props[max_props-1] = curr;
 						
 						if(props.len() > 1) {
-							prev_prop_origin <- Entities.FindByName(null, props[props.len()-2]).GetOrigin();
+							prev_prop_origin <- props[props.len()-2].GetOrigin();
 							prev_dist <- min((prev_prop_origin-origin[0]).Length(), (prev_prop_origin-origin[1]).Length());
 							
-							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							prop_origin <- props.top().GetOrigin();
 							dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
 							
 							index <- props.len()-1
@@ -281,7 +290,7 @@ main_loop <- function() {
 								index--;
 								
 								if (index == 0) break;
-								prev_prop_origin <- Entities.FindByName(null, props[index-1]).GetOrigin();
+								prev_prop_origin <- props[index-1].GetOrigin();
 								prev_dist <- min((prev_prop_origin-origin[0]).Length(), (prev_prop_origin-origin[1]).Length());
 							}
 						}
@@ -291,7 +300,7 @@ main_loop <- function() {
 						curr <- Entities.FindByClassname(curr, names[i])
 					} else {
 						if (count ==  max_props){
-							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							prop_origin <- props.top().GetOrigin();
 							dist <- min((prop_origin-origin[0]).Length(), (prop_origin-origin[1]).Length());
 						}
 						
@@ -303,36 +312,42 @@ main_loop <- function() {
 		}
 		return;
 	}
-
-	// Find portals
-	detector <- null;
-	while(detector = Entities.FindByName(detector, "detector_blue"))
-		detector.Destroy();
-	while(detector = Entities.FindByName(detector, "detector_orange"))
-		detector.Destroy();
 	
-	portal <- null;
-	while(portal = Entities.FindByClassname(portal, "prop_portal")){
-		model <- portal.GetModelName();
-		if(model == "models/portals/portal1.mdl"){
-			detector <- Entities.CreateByClassname("func_portal_detector");
-			detector.__KeyValueFromString("targetname", "detector_blue");
-			detector.__KeyValueFromInt("LinkageGroupID", 0)
-			detector.SetOrigin(portal.GetOrigin())
-			detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-		} else {
-			detector <- Entities.CreateByClassname("func_portal_detector");
-			detector.__KeyValueFromString("targetname", "detector_orange");
-			detector.__KeyValueFromInt("LinkageGroupID", 0)
-			detector.SetOrigin(portal.GetOrigin())
-			detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
+	function Portal_Add() {
+		
+		ptl <- null;
+		while(ptl = Entities.FindByClassname(ptl, "prop_portal")){
+			
+			for(count <- 0; count<all_portals.len(); count++) {
+				if(all_portals[count] == ptl)
+					break;
+			}
+
+			if (count ==  all_portals.len())
+			{
+				all_portals.append(ptl)
+				detectors.append(Entities.CreateByClassname("func_portal_detector"));
+				detectors[count].SetSize(Vector(-1,-1,-1), Vector(1, 1, 1));
+				detectors[count].__KeyValueFromInt("LinkageGroupID", 0)
+				
+				model <- ptl.GetModelName();
+				if(model == "models/portals/portal1.mdl")
+					EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_blue = self.GetOrigin()", 0, detectors[count], detectors[count]);
+				else
+					EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_orange = self.GetOrigin()", 0, detectors[count], detectors[count]);
+			}
+			
+			detectors[count].SetOrigin(ptl.GetOrigin())
+			
+			EntFireByHandle(detectors[count], "Toggle", "", 0, null, null);
+			EntFireByHandle(detectors[count], "Toggle", "", 0, null, null);
 		}
 	}
+
+	// Set up portal detection
 	
-	EntFire("detector_blue", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_blue = self.GetOrigin()");
-	EntFire("detector_orange", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_orange = self.GetOrigin()");
-	EntFire("detector_blue", "Enable");
-	EntFire("detector_orange", "Enable");
+	Portal_Remove();
+	Portal_Add();
 	
 	// Check portals
 	

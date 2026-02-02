@@ -4,7 +4,8 @@ IncludeScript("maths");
 names <- ["prop_weighted_cube", "prop_monster_box", "prop_paint_bomb", "npc_portal_turret_floor", "npc_security_camera", "prop_exploding_futbol"];
 pushes <- [];
 props <- [];
-prop_id <- 0
+all_portals <- [];
+detectors <- [];
 detected_cyan <- null;
 detected_purple <- null;
 detected_yellow <- null;
@@ -48,7 +49,7 @@ main_loop <- function() {
 				if (i == -1)
 					curr <- Entities.FindByClassname(curr, "player");
 				if (i > -1)
-					curr <- Entities.FindByName(null, props[i]);
+					curr <- props[i];
 				if(!curr) continue;
 				
 				if(Check_Funnels(curr)) continue;
@@ -381,11 +382,21 @@ main_loop <- function() {
 
 	// Remove deleted props from the array of props
 	
-	function Check_Remove() {
+	function Prop_Remove() {
 		for(local i=props.len(); i>0; i--) {
-			if(!Entities.FindByName(null, props[i-1])) {
+			if(!props[i-1].IsValid()) {
 				pushes[i-1].__KeyValueFromFloat("magnitude", 0.0);
 				props.remove(i-1);
+			}
+		}
+		return;
+	}
+	
+	function Portal_Remove() {
+		for(local i=all_portals.len(); i>0; i--) {
+			if(!all_portals[i-1].IsValid()) {
+				all_portals[i-1] = null;
+				EntFireByHandle(detectors[i-1], "Disable", "", 0, null, null)
 			}
 		}
 		return;
@@ -395,7 +406,7 @@ main_loop <- function() {
 	// Only checks props that are closer than the furthest prop in the array
 	// If array is not yet filled, checks all props
 	
-	function Check_Add() {
+	function Prop_Add() {
 		
 		for(local i = 0; i < names.len(); i++){
 			
@@ -406,32 +417,30 @@ main_loop <- function() {
 				if (props.len() < max_props) {
 					curr <- Entities.FindByClassname(null, names[i])
 				} else {
-					prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+					prop_origin <- props.top().GetOrigin();
 					dist <- Portal_Distance(prop_origin);
 
 					curr <- Entities.FindByClassnameWithin(null, names[i], ::origin[j], dist);
 				}
 				while(curr) {
-				
-					if(curr.GetName() == "") curr.__KeyValueFromString("targetname","pushable_"+(prop_id++));
 					
 					for(count <- 0; count<props.len(); count++) {
-						if(props[count] == curr.GetName())
+						if(props[count] == curr)
 							break;
 					}
 					
 					if (count ==  props.len())
 					{
 						if (props.len() < max_props)
-							props.append(curr.GetName());
+							props.append(curr);
 						else
-							props[max_props-1] = curr.GetName();
+							props[max_props-1] = curr;
 						
 						if(props.len() > 1) {
-							prev_prop_origin <- Entities.FindByName(null, props[props.len()-2]).GetOrigin();
+							prev_prop_origin <- props[props.len()-2].GetOrigin();
 							prev_dist <- Portal_Distance(prev_prop_origin);
 							
-							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							prop_origin <- props.top().GetOrigin();
 							dist <- Portal_Distance(prop_origin);
 							
 							index <- props.len()-1
@@ -442,7 +451,7 @@ main_loop <- function() {
 								index--;
 								
 								if (index == 0) break;
-								prev_prop_origin <- Entities.FindByName(null, props[index-1]).GetOrigin();
+								prev_prop_origin <- props[index-1].GetOrigin();
 								prev_dist <- Portal_Distance(prev_prop_origin);
 							}
 						}
@@ -452,7 +461,7 @@ main_loop <- function() {
 						curr <- Entities.FindByClassname(curr, names[i])
 					} else {
 						if (count ==  max_props){
-							prop_origin <- Entities.FindByName(null, props.top()).GetOrigin();
+							prop_origin <- props.top().GetOrigin();
 							dist <- Portal_Distance(prop_origin);
 						}
 						
@@ -463,6 +472,53 @@ main_loop <- function() {
 			}
 		}
 		return;
+	}
+	
+	function Portal_Add() {
+		
+		ptl <- null;
+		while(ptl = Entities.FindByClassname(ptl, "prop_portal")){
+			
+			if (!(ptl.GetTeam() == 2) && !(ptl.GetTeam() == 3)) continue;
+			
+			for(count <- 0; count<all_portals.len(); count++) {
+				if(all_portals[count] == ptl)
+					break;
+			}
+			
+			if (count ==  all_portals.len())
+			{
+				all_portals.append(ptl)
+				detectors.append(Entities.CreateByClassname("func_portal_detector"));
+				detectors[count].SetSize(Vector(-1,-1,-1), Vector(1, 1, 1));
+				
+				model <- ptl.GetModelName();
+				if(model == "models/portals/portal1.mdl"){
+					if (ptl.GetTeam() == 3) {
+						detectors[count].__KeyValueFromInt("LinkageGroupID", 1)
+						EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_cyan = self.GetOrigin()", 0, detectors[count], detectors[count]);
+					}
+					if (ptl.GetTeam() == 2) {
+						detectors[count].__KeyValueFromInt("LinkageGroupID", 2)
+						EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_yellow = self.GetOrigin()", 0, detectors[count], detectors[count]);
+					}
+				} else {
+					if (ptl.GetTeam() == 3) {
+						detectors[count].__KeyValueFromInt("LinkageGroupID", 1)
+						EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_purple = self.GetOrigin()", 0, detectors[count], detectors[count]);
+					}
+					if (ptl.GetTeam() == 2) {
+						detectors[count].__KeyValueFromInt("LinkageGroupID", 2)
+						EntFireByHandle(detectors[count], "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_red = self.GetOrigin()", 0, detectors[count], detectors[count]);
+					}
+				}
+			}
+			
+			detectors[count].SetOrigin(ptl.GetOrigin())
+			
+			EntFireByHandle(detectors[count], "Toggle", "", 0, null, null);
+			EntFireByHandle(detectors[count], "Toggle", "", 0, null, null);
+		}
 	}
 	
 	function Portal_Distance(other) {
@@ -478,61 +534,10 @@ main_loop <- function() {
 		return 9999999
 	}
 	
-	detector <- null
-	while(detector = Entities.FindByName(detector,"detector_cyan"))
-		detector.Destroy();
-	while(detector = Entities.FindByName(detector,"detector_yellow"))
-		detector.Destroy();
-	while(detector = Entities.FindByName(detector,"detector_purple"))
-		detector.Destroy();
-	while(detector = Entities.FindByName(detector,"detector_red")) 
-		detector.Destroy();
+	// Set up portal detection
 	
-	ptl <- null;
-	while(ptl = Entities.FindByClassname(ptl, "prop_portal")){
-		model <- ptl.GetModelName();
-		if(model == "models/portals/portal1.mdl"){
-			if (ptl.GetTeam() == 3) {
-				detector = Entities.CreateByClassname("func_portal_detector");
-				detector.__KeyValueFromString("targetname", "detector_cyan");
-				detector.__KeyValueFromInt("LinkageGroupID", 1)
-				detector.SetOrigin(ptl.GetOrigin())
-				detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-			}
-			if (ptl.GetTeam() == 2) {
-				detector = Entities.CreateByClassname("func_portal_detector");
-				detector.__KeyValueFromString("targetname", "detector_yellow");
-				detector.__KeyValueFromInt("LinkageGroupID", 2)
-				detector.SetOrigin(ptl.GetOrigin())
-				detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-			}
-		} else {
-			if (ptl.GetTeam() == 3) {
-				detector = Entities.CreateByClassname("func_portal_detector");
-				detector.__KeyValueFromString("targetname", "detector_purple");
-				detector.__KeyValueFromInt("LinkageGroupID", 1)
-				detector.SetOrigin(ptl.GetOrigin())
-				detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-			}
-			if (ptl.GetTeam() == 2) {
-				detector = Entities.CreateByClassname("func_portal_detector");
-				detector.__KeyValueFromString("targetname", "detector_red");
-				detector.__KeyValueFromInt("LinkageGroupID", 2)
-				detector.SetOrigin(ptl.GetOrigin())
-				detector.SetSize(Vector(-1,-1,-1), Vector(1, 1, 1))
-			}
-		}
-	}
-	
-	EntFire("detector_cyan", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_cyan = self.GetOrigin()");
-	EntFire("detector_purple", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_purple = self.GetOrigin()");
-	EntFire("detector_yellow", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_yellow = self.GetOrigin()");
-	EntFire("detector_red", "AddOutput", "OnStartTouchLinkedPortal !self:RunScriptCode:detected_red = self.GetOrigin()");
-	
-	EntFire("detector_cyan", "Enable");
-	EntFire("detector_purple", "Enable");
-	EntFire("detector_yellow", "Enable");
-	EntFire("detector_red", "Enable");
+	Portal_Remove();
+	Portal_Add();
 
 	// Check portals
 	
@@ -598,8 +603,8 @@ main_loop <- function() {
 	// Simply run physics if portals are unchanged
 	
 	if (!changed) {
-		Check_Remove();
-		Check_Add();
+		Prop_Remove();
+		Prop_Add();
 		Run_Physics();
 		return;
 	}
@@ -609,8 +614,8 @@ main_loop <- function() {
 	if (portal_temp[0] && portal_temp[1] && portal_temp[2] && portal_temp[3]) {
 		Generate_Both();
 		
-		Check_Remove();
-		Check_Add();
+		Prop_Remove();
+		Prop_Add();
 		Run_Physics();
 		return;
 	}
@@ -620,8 +625,8 @@ main_loop <- function() {
 		::portal[3] = null;
 		Generate_Cyan_Purple();
 		
-		Check_Remove();
-		Check_Add();
+		Prop_Remove();
+		Prop_Add();
 		Run_Physics();
 		return;
 	}
@@ -631,8 +636,8 @@ main_loop <- function() {
 		::portal[1] = null;
 		Generate_Yellow_Red();
 		
-		Check_Remove();
-		Check_Add();
+		Prop_Remove();
+		Prop_Add();
 		Run_Physics();
 		return;
 	}
