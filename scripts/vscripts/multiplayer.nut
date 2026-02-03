@@ -394,7 +394,7 @@ main_loop <- function() {
 	
 	function Portal_Remove() {
 		for(local i=all_portals.len(); i>0; i--) {
-			if(!all_portals[i-1].IsValid()) {
+			if(all_portals[i-1] && !(all_portals[i-1].IsValid())) {
 				all_portals[i-1] = null;
 				EntFireByHandle(detectors[i-1], "Disable", "", 0, null, null)
 			}
