@@ -7,7 +7,7 @@
 	"version": "1.0.0",
 	"args": [],
 	"file": "https://github.com/MorePortal/gravity_teleportation/releases/download/latest/gravity-teleportation.tar.xz",
-	"icon": "https://raw.githubusercontent.com/MorePortal/gravity_teleportation/refs/heads/main/packages/gravity-teleportation/icon.png"
+	"icon": "https://raw.githubusercontent.com/MorePortal/gravity_teleportation/refs/heads/master/packages/gravity-teleportation/icon.png"
 	}
   ]
 }
