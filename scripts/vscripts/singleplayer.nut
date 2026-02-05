@@ -58,6 +58,8 @@ main_loop <- function() {
 					ellipt_v <- Get_Ellipsoidal_Coords(local_v);
 					aux_v <- Get_Aux_Vector(local_v, ellipt_v);
 					
+					if (aux_v.LengthSqr() == 0.0) continue;
+					
 					g0 <- Get_g0(ellipt_v, aux_v) * constants[j][0]
 					g1x <- Get_g1x(local_v, ellipt_v, aux_v, precision) * constants[j][1]
 					g1y <- Get_g1y(local_v, ellipt_v, aux_v, precision) * constants[j][2]
