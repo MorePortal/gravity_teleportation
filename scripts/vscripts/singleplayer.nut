@@ -46,7 +46,9 @@ main_loop <- function() {
 					curr <- GetPlayer();
 				else
 					curr <- props[i];
+					
 				if(!curr) continue;
+				if(!curr.IsValid()) continue;
 				
 				if(Check_Funnels(curr)) continue;
 				
@@ -228,7 +230,7 @@ main_loop <- function() {
 	
 	function Check_Remove() {
 		for(local i=props.len(); i>0; i--) {
-			if(!props[i-1].IsValid()) {
+			if(!props[i-1] || (!props[i-1].IsValid() || (props[i-1].entindex() == 0))) {
 				pushes[i-1].__KeyValueFromFloat("magnitude", 0.0);
 				props.remove(i-1);
 			}
