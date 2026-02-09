@@ -34,6 +34,29 @@ self_potential.append([0.0, 0.0, -Integral(0.0, PI/2, E_1y, precision), 0.0])
 self_potential.append([0.0, 0.0, 0.0, -Integral(0.0, PI/2, E_1z, precision)])
 // Technically, there are self_potential[0][3] and self_potential[3][0] terms, but they will cancel themselves out
 
+// Variables to draw a field
+show_mins_glob <- Vector(0.0, 0.0, 0.0)
+show_maxs_glob <- Vector(0.0, 0.0, 0.0)
+calc_mins_glob <- Vector(0.0, 0.0, 0.0)
+calc_maxs_glob <- Vector(0.0, 0.0, 0.0)
+divx_glob <- 1
+divy_glob <- 1
+side_glob <- 1
+err_term_glob <- 0.000004
+redraw <- 0;
+pos <- [0, 0, 0, null]
+stepsize <- 0.0
+line_sign <- 0
+inbounds <- 2;
+Orange <- [255, 154, 0]
+Blue <- [39, 167, 216]
+gamma <- 2.2
+
+// Constants for RKF45 ODE solver
+RKF45 <- [[0, 0, 0, 0, 0], [1.0/4.0, 0, 0, 0, 0], [3.0/32.0, 9.0/32.0, 0, 0, 0], [1932.0/2197.0, -7200.0/2197.0, 7296.0/2197.0, 0, 0], [439.0/216.0, -8, 3680.0/513.0, -845.0/4104.0, 0], [-8.0/27.0, 2, -3544.0/2565.0, 1859.0/4104.0, -11.0/40.0]]
+RKF4 <- [25.0/216.0, 0, 1408.0/2565.0, 2197.0/4104.0, -1.0/5.0]
+RKFerr <- [16.0/135.0 - 25.0/216.0, 0, 6656.0/12825.0 - 1408.0/2565.0, 28561.0/56430.0 - 2197.0/4104.0, -9.0/50.0 + 1.0/5.0, 2.0/55.0]
+
 main_loop <- function() {
 	
 	// Calculates and applies accelerations
@@ -238,6 +261,8 @@ main_loop <- function() {
 		return;
 	}
 	
+	// Remove an invalid/null portal from the list
+	
 	function Portal_Remove() {
 		for(local i=all_portals.len(); i>0; i--) {
 			if(all_portals[i-1] && !(all_portals[i-1].IsValid())) {
@@ -317,6 +342,8 @@ main_loop <- function() {
 		return;
 	}
 	
+	// Add a portal to the list and create an 'func_portal_detector object' to track it
+	
 	function Portal_Add() {
 		
 		ptl <- null;
@@ -347,6 +374,23 @@ main_loop <- function() {
 			EntFireByHandle(detectors[count], "Toggle", "", 0, null, null);
 		}
 	}
+	
+	// Drawing the field
+	// Portal physics is disabled while the field is being drawn
+	
+	if(redraw) {
+		show_mins_glob
+		Draw_Field(show_mins_glob, show_maxs_glob, calc_mins_glob, calc_maxs_glob, divx_glob, divy_glob, side_glob, err_term_glob);
+		redraw = 0;
+		pos = [0, 0, 0, null];
+		return;
+	}
+	
+	// Commands I used to generate an icon
+	// I'll just put them here
+	// portal_place 0 0 576 64 0.03125 -90 90 0
+	// portal_place 0 1 576 64 127.96875 90 -90 0
+	// script Draw_Field_At(Vector(480, 0, 0), Vector(672, 128, 128), Vector(448, 0, 0), Vector(704, 128, 1152), 12, 6, 1, 0.000004)
 
 	// Set up portal detection
 	
@@ -364,6 +408,8 @@ main_loop <- function() {
 		::detected_orange = null;
 	}
 	
+	// No portals found
+	
 	if(!portal_temp[0] || !portal_temp[1]) {
 		::portal[0] = null;
 		::portal[1] = null;
@@ -371,6 +417,7 @@ main_loop <- function() {
 		return;
 	}
 	
+	// Generate coefficients and run physics for newly created portals
 	
 	if(!::portal[0] || !::portal[1]) {
 		Get_Coordinates();
@@ -381,6 +428,8 @@ main_loop <- function() {
 		Run_Physics();
 		return;
 	} 
+	
+	// Generate coefficients and run physics for changed portals
 	
 	if (!Vector_Eq(::origin[0], portal_temp[0].GetOrigin()) || !Vector_Eq(::portal[0].GetAngles(), portal_temp[0].GetAngles()) || !Vector_Eq(::origin[1], portal_temp[1].GetOrigin()) || !Vector_Eq(::portal[1].GetAngles(), portal_temp[1].GetAngles())) {
 		Get_Coordinates();
@@ -401,6 +450,176 @@ main_loop <- function() {
 	
 }
 
+// Command to draw the field
+// It is called on every tick
+
+::Draw_Field <- function(show_mins, show_maxs, calc_mins, calc_maxs, divx, divy, side, err_term) {
+	h <- Vector((calc_maxs.x - calc_mins.x) / divx, (calc_maxs.y - calc_mins.y) / divy, 0)
+	tp <- 0;
+	
+	for (local i=pos[0]; i<divx; i++) {
+		for (local j=pos[1]; j<divy; j++) {
+			pad <- 1.0/16.0
+			
+			if (!::pos[3])
+				::pos[3] = ((side > 0) ? (calc_maxs - Vector((i+0.5)*h.x, (j+0.5)*h.y, 0.0)) : (calc_mins + Vector((i+0.5)*h.x, (j+0.5)*h.y, 0.0))) 
+			
+			if (::stepsize == 0.0)
+				::stepsize = 1.0
+			
+			while (::inbounds) {
+				
+				coeff <- [Vector(0.0, 0.0, 0.0), Vector(0.0, 0.0, 0.0), Vector(0.0, 0.0, 0.0), Vector(0.0, 0.0, 0.0), Vector(0.0, 0.0, 0.0), Vector(0.0, 0.0, 0.0)]
+				lens <- [0, 0]
+				
+				for (local k=0; k<6; k++) {
+				
+					acceleration <- Vector(0.0, 0.0, 0.0);
+			
+					for(local j1=0; j1<2; j1++) {
+						
+						if(!portal[j1]) continue;
+						
+						local_v <- Matrix_Vector_Mult_3D(local_inv[j1], ::pos[3] + (coeff[0]*::RKF45[k][0] + coeff[1]*::RKF45[k][1] + coeff[2]*::RKF45[k][2] + coeff[3]*::RKF45[k][3] + coeff[4]*::RKF45[k][4])*::stepsize - origin[j1]);
+						ellipt_v <- Get_Ellipsoidal_Coords(local_v);
+						aux_v <- Get_Aux_Vector(local_v, ellipt_v);
+						
+						if (k==0 && fabs(local_v.z) < pad && ellipt_v.x < 5.5*sqrt(pad)) {
+							tp <- j1 + 1
+						}
+						
+						if(k==0)
+							lens[j1] = ellipt_v.x;
+						
+						if (aux_v.LengthSqr() == 0.0) continue;
+						
+						g0 <- Get_g0(ellipt_v, aux_v) * constants[j1][0]
+						g1x <- Get_g1x(local_v, ellipt_v, aux_v, precision) * constants[j1][1]
+						g1y <- Get_g1y(local_v, ellipt_v, aux_v, precision) * constants[j1][2]
+						g1z <- Get_g1z(local_v, ellipt_v, aux_v, precision) * constants[j1][3]
+						
+						acceleration += Matrix_Vector_Mult_3D(local_matrix[j1], (g0 + g1x + g1y + g1z)*-1);
+					}
+					
+					if (line_sign == 0) 
+						::line_sign = (side * (acceleration + Vector(0,0,-g)).z > 0) ? -1 : 1;
+					coeff[k] = (acceleration + Vector(0,0,-g)) * line_sign
+					
+				}
+				
+				if (pos[2] == 0 && (coeff[0].z * line_sign) > 0) break;
+				
+				error <- (coeff[0]*::RKFerr[0] + coeff[1]*::RKFerr[1] + coeff[2]*::RKFerr[2] + coeff[3]*::RKFerr[3] + coeff[4]*::RKFerr[4] + coeff[5]*::RKFerr[5]).Length()*::stepsize
+				
+				next_stepsize <- 0.9 * ::stepsize * pow(err_term / error, 0.2)
+				if (error > err_term) {
+					::stepsize = next_stepsize
+				} else {
+					unculled <- ::pos[3]  + (coeff[0]*::RKF4[0] + coeff[1]*::RKF4[1] + coeff[2]*::RKF4[2] + coeff[3]*::RKF4[3] + coeff[4]*::RKF4[4])*::stepsize;
+					next_point <- cull(::pos[3], unculled, show_mins, show_maxs);
+					
+					if (::inbounds == 1) {
+						if (portal[0] && portal[1]) {
+							temp <- lens[0]*lens[0] + lens[1]*lens[1]
+							lens[0] *= (lens[0]/temp);
+							lens[1] *= (lens[1]/temp);
+							color <- gamma_corr(Orange, Blue, lens)
+						} else
+							color <- [255, 255, 0]
+						DebugDrawLine(::pos[3], next_point, color[0], color[1], color[2], false, 1000)
+					}
+					
+					if ((unculled.x <= show_maxs.x) && (unculled.x >= show_mins.x) && (unculled.y <= show_maxs.y) && (unculled.y >= show_mins.y) && (unculled.z <= show_maxs.z) && (unculled.z >= show_mins.z))
+						::inbounds = 1;
+					else
+						if ((unculled.x <= calc_maxs.x) && (unculled.x >= calc_mins.x) && (unculled.y <= calc_maxs.y) && (unculled.y >= calc_mins.y) && (unculled.z <= calc_maxs.z) && (unculled.z >= calc_mins.z))
+							::inbounds = 2;
+						else
+							::inbounds = 0;
+					
+					if (tp) {
+						next_point <- ::pos[3] + (next_point - ::pos[3]) * 2.1*((origin[tp - 1] - ::pos[3]).Dot(portal[tp - 1].GetForwardVector()) / (next_point - ::pos[3]).Dot(portal[tp - 1].GetForwardVector()))
+						::pos[3] = Matrix_Vector_Mult_3D(local_inv[tp - 1], next_point - origin[tp - 1]);
+						::pos[3].y *= -1
+						::pos[3].z *= -1
+						::pos[3] = Matrix_Vector_Mult_3D(local_matrix[2 - tp], ::pos[3]) + origin[2 - tp];
+						tp <- 0;
+					}
+					else {
+						::pos[3] = next_point;
+					}
+					
+					::pos[2]++;
+					::stepsize = next_stepsize;
+				}
+			}
+			::pos[3] = null;
+			::stepsize = 0.0;
+			::line_sign = 0;
+			::inbounds = 2;
+			::pos[2] = 0;
+			::pos[1]++;
+		}
+		::pos[1] = 0;
+		::pos[0]++;
+	}
+}
+
+// Command to draw the field
+// It is called once to start drawing
+
+::Draw_Field_At <- function(show_mins, show_maxs, calc_mins, calc_maxs, divx, divy, side, err_term) {
+	::show_mins_glob <- show_mins;
+	::show_maxs_glob <- show_maxs;
+	::calc_mins_glob <- calc_mins;
+	::calc_maxs_glob <- calc_maxs;
+	::divx_glob <- divx;
+	::divy_glob <- divy;
+	::side_glob <- side;
+	::err_term_glob <- err_term;
+	::redraw <- 1;
+}
+
+// Color averaging
+
+::gamma_corr <- function(color1, color2, bias) {
+	aver <- [0.0, 0.0, 0.0]
+	for (local i=0; i<3; i++)
+		aver[i] = abs(pow(pow(color1[i],gamma)*bias[0] + pow(color2[i],gamma)*bias[1], 1.0/gamma))
+	return aver
+}
+
+// Culling
+
+::cull <- function(point1, point2, mins, maxs) {
+	point1_arr <- [point1.x, point1.y, point1.z]
+	point2_arr <- [point2.x, point2.y, point2.z]
+	planes <- [mins.x, mins.y, mins.z, maxs.x, maxs.y, maxs.z]
+	axes <- [0,1,2,0,1,2]
+	
+	ans <- 1.0
+	point <- point2
+		
+	for (local i=0; i<6; i++) {
+		
+		if ((point2_arr[axes[i]] - point1_arr[axes[i]]) == 0.0) continue;
+		
+		t <- (planes[i] - point1_arr[axes[i]]) / (point2_arr[axes[i]] - point1_arr[axes[i]])
+		if ((t - -0.0) > 0.0 && t <= 1.0) {
+			point_arr <- [point1_arr[0] + (point2_arr[0] - point1_arr[0]) * t, point1_arr[1] + (point2_arr[1] - point1_arr[1]) * t, point1_arr[2] + (point2_arr[2] - point1_arr[2]) * t]
+			point_arr[axes[i]] = planes[i]
+			if ((point_arr[0] <= maxs.x) && (point_arr[0] >= mins.x) && (point_arr[1] <= maxs.y) && (point_arr[1] >= mins.y) && (point_arr[2] <= maxs.z) && (point_arr[2] >= mins.z)) {
+				if (t < ans) {
+					ans = t;
+					point <- Vector(point_arr[0], point_arr[1], point_arr[2])
+				}
+			}
+		}
+	}
+	
+	return point
+}
+	
 ::mod_logic <- function() {
 
 	// Generate clock entity

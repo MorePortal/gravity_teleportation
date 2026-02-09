@@ -1,13 +1,13 @@
 if(!("Entities" in this)) return;
 
-const a_ = 56.0;
-const a2 = 3136.0
-const b_ = 32.0;
-const b2 = 1024.0;
-const a2mb2 = 2112.0;
-const a2pb2 = 4160.0;
-const atb = 1792.0;
-const a2tb2 = 3211264.0;
+const a_ = 52.0;
+const a2 = 2704.0
+const b_ = 30.0;
+const b2 = 900.0;
+const a2mb2 = 1804.0;
+const a2pb2 = 3604.0;
+const atb = 1560.0;
+const a2tb2 = 2433600.0;
 
 // Ordinary math functions
 
